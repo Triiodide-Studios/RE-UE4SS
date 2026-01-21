@@ -578,12 +578,11 @@ namespace RC::LuaMadeSimple
 
         create("__newindex", metamethods.new_index);
 
-        bool custom_gc_method{};
-        if (metamethods.gc.has_value())
-        {
-            create("__gc", metamethods.gc);
-            custom_gc_method = true;
-        }
+        // NOTE: In Luau, __gc metamethod is NOT supported
+        // Destructors are handled via lua_newuserdatadtor when creating userdata
+        // Custom gc metamethods are ignored - destructors must be registered at creation time
+        bool custom_gc_method = metamethods.gc.has_value();
+        // We don't call create("__gc", ...) because Luau ignores it
 
         create("__call", metamethods.call);
         create("__eq", metamethods.equal);

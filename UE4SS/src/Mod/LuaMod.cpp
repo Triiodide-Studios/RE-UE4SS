@@ -233,7 +233,7 @@ namespace RC
         auto& lua_data = *static_cast<LuaUnrealScriptFunctionData*>(custom_data);
 
         // Returns true if a hooks were removed.
-        auto remove_if_scheduled = [&] -> bool {
+        auto remove_if_scheduled = [&]() -> bool {
             if (lua_data.scheduled_for_removal)
             {
                 const auto function_name_no_prefix = get_function_name_without_prefix(lua_data.unreal_function->GetFullName());

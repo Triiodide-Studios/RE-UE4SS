@@ -1,4 +1,11 @@
 # First party dependencies -> START
+
+# Luau configuration - disable CLI and tests, we only need the VM and Compiler
+set(LUAU_BUILD_CLI OFF CACHE BOOL "Build CLI" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
+set(LUAU_BUILD_WEB OFF CACHE BOOL "Build Web module" FORCE)
+add_subdirectory("Luau")
+
 add_subdirectory("ArgsParser")
 add_subdirectory("ASMHelper")
 add_subdirectory("Constructs")
@@ -11,7 +18,8 @@ add_subdirectory("IniParser")
 add_subdirectory("Input")
 add_subdirectory("JSON")
 add_subdirectory("LuaMadeSimple")
-add_subdirectory("LuaRaw")
+# LuaRaw is replaced by Luau - commenting out
+# add_subdirectory("LuaRaw")
 add_subdirectory("MProgram")
 add_subdirectory("ParserBase")
 add_subdirectory("ScopedTimer")

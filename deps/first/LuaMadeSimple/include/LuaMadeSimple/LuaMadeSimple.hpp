@@ -581,34 +581,23 @@ namespace RC::LuaMadeSimple
 
       public:
         // Create a new metatable and put references to member functions table in it
-        // A metatable is automatically attached with a __gc metamethod that calls the ObjectType destructor
+        // NOTE: In Luau, __gc is not supported. Destructors are handled via lua_newuserdatadtor
+        // when creating the userdata. The metatable is still used for other metamethods.
         // More metamethods can be supplied via the 'metamethods' parameter (see the 'MetaMethods' struct)
         template <typename ObjectType>
         auto new_metatable(std::optional<std::string_view> metatable_name = std::nullopt, OptionalMetaMethods metamethods = std::nullopt) const -> void
         {
-            auto create_auto_gc_metamethod = [](Table& metatable) {
-                metatable.add_pair("__gc", [](lua_State* lua_state) -> int {
-                    auto* userdata = static_cast<ObjectType*>(lua_touserdata(lua_state, 1));
-                    userdata->~ObjectType();
-
-                    return 0;
-                });
-            };
-
-            bool custom_gc_method{};
+            // Note: In Luau, we don't add __gc to metatables
+            // Destructors are registered when creating userdata with lua_newuserdatadtor
+            // or via the tagged userdata system
 
             if (metatable_name.has_value() && metamethods.has_value())
             {
                 // At least some metamethods might have been provided
-
                 Table metatable = prepare_new_metatable(metatable_name.value().data());
 
-                custom_gc_method = add_metamethods(metamethods.value(), metatable);
-                if (!custom_gc_method)
-                {
-                    // There may have been some metamethods provided but '__gc' wasn't one of them so we can safely attach our own
-                    create_auto_gc_metamethod(metatable);
-                }
+                // Add metamethods (excluding __gc which is handled differently in Luau)
+                add_metamethods(metamethods.value(), metatable);
             }
             else
             {
@@ -619,8 +608,7 @@ namespace RC::LuaMadeSimple
                 {
                     discard_value(-1);
                     prepare_new_metatable(no_gc_metatable);
-                    // We know that the user didn't provide their own '__gc' metamethod so we can safely attach our own
-                    create_auto_gc_metamethod(metatable);
+                    // In Luau, no __gc is added - destructors are handled at userdata creation
                 }
             }
             if (is_table(-2)) // if called from construct_metamethods_object this will be false
@@ -631,6 +619,7 @@ namespace RC::LuaMadeSimple
         }
 
         // Transfer ownership of a C++ object stored on the stack to Lua via userdata
+        // In Luau, we use lua_newuserdatadtor for automatic destructor calling
         // More metamethods can be supplied via the 'metamethods' parameter (see the 'MetaMethods' struct)
         template <typename ObjectType>
         auto transfer_stack_object(ObjectType&& object,
@@ -638,110 +627,89 @@ namespace RC::LuaMadeSimple
                                    OptionalMetaMethods metamethods = std::nullopt,
                                    bool is_metamethod_container = false) const -> void
         {
-            auto* userdata = static_cast<ObjectType*>(lua_newuserdatauv(get_lua_state(), sizeof(ObjectType), 5));
+            // In Luau, use lua_newuserdatadtor to register a destructor at creation time
+            // The destructor is called when the userdata is garbage collected
+            auto* userdata = static_cast<ObjectType*>(lua_newuserdatadtor(get_lua_state(), sizeof(ObjectType), [](void* ud) {
+                static_cast<ObjectType*>(ud)->~ObjectType();
+            }));
 
-            // Set a user value that tells 'get_userdata()' that this userdata is a stack object owned by lua
-            set_integer(UserdataInternalType::LuaOwnedStackObject);
-            lua_setiuservalue(get_lua_state(), -2, 2);
+            // Create environment table for user values (Luau doesn't support multiple user values natively)
+            lua_createtable(get_lua_state(), 5, 0);
 
-            // Attach metatable to useradata for reference
-            if (lua_rawgeti(get_lua_state(), -2, 1) == LUA_TTABLE)
-            {
-                lua_setiuservalue(get_lua_state(), -2, 3);
-            }
-            else
-            {
-                discard_value(-1);
-            }
+            // Set user value 2: internal type (LuaOwnedStackObject)
+            lua_pushinteger(get_lua_state(), UserdataInternalType::LuaOwnedStackObject);
+            lua_rawseti(get_lua_state(), -2, 2);
 
-            if (!is_metamethod_container)
-            {
-                // Set a user value that contains the metamethod handlers
-                if (lua_rawgeti(get_lua_state(), -2, 2) == LUA_TNIL)
-                {
-                    discard_value(-1);
-                    construct_metamethods_object(metamethods, "MetaMethodContainer");
-                    lua_pushvalue(get_lua_state(), -1);
-                    lua_rawseti(get_lua_state(), -4, 2);
-                }
-                lua_setiuservalue(get_lua_state(), -2, 4);
-            }
-
-            // Set a user value that determines whether this is a polymorphic type.
-            // This is used to determine if 'GetAddress' and 'GetValid' needs to be overridden by the derived type.
+            // Set user value 5: is polymorphic type
             if constexpr (std::is_polymorphic_v<ObjectType>)
             {
-                set_bool(true);
+                lua_pushboolean(get_lua_state(), true);
             }
             else
             {
-                set_bool(false);
+                lua_pushboolean(get_lua_state(), false);
             }
-            lua_setiuservalue(get_lua_state(), -2, 5);
+            lua_rawseti(get_lua_state(), -2, 5);
 
+            // Set the environment table on the userdata
+            lua_setfenv(get_lua_state(), -2);
+
+            // Construct the object in-place
             new (userdata) ObjectType(std::move(object));
 
-            // Remove dangling table
-            lua_remove(get_lua_state(), -2);
+            // Set the metatable
             luaL_getmetatable(get_lua_state(), metatable_name.has_value() ? metatable_name.value().data() : "AutoGCMetatable");
             lua_setmetatable(get_lua_state(), -2);
         }
 
         // Share a heap object (std::shared_ptr) with Lua via userdata
-        // A metatable is automatically attached with a __gc metamethod that calls the ObjectType destructor
+        // In Luau, we use lua_newuserdatadtor for automatic destructor calling
         // More metamethods can be supplied via the 'metamethods' parameter (see the 'MetaMethods' struct)
         template <typename ObjectType>
         auto share_heap_object(const std::shared_ptr<ObjectType>& object,
                                std::optional<std::string_view> metatable_name = std::nullopt,
                                OptionalMetaMethods metamethods = std::nullopt) const -> void
         {
-            auto create_auto_gc_metamethod = [](Table& metatable) {
-                metatable.add_pair("__gc", [](lua_State* lua_state) -> int {
-                    auto* userdata = static_cast<std::shared_ptr<ObjectType>*>(lua_touserdata(lua_state, 1));
-                    userdata->~shared_ptr<ObjectType>();
-
-                    return 0;
-                });
-            };
-
-            bool custom_gc_method{};
-
             if (metatable_name.has_value() && metamethods.has_value())
             {
                 // At least some metamethods might have been provided
-
                 m_working_metatable_name = metatable_name.value();
                 m_working_metamethods = metamethods;
 
                 Table metatable = prepare_new_metatable(m_working_metatable_name.data());
 
-                custom_gc_method = add_metamethods(metamethods.value(), metatable);
-                if (!custom_gc_method)
-                {
-                    // There may have been some metamethods provided but '__gc' wasn't one of them so we can safely attach our own
-                    create_auto_gc_metamethod(metatable);
-                }
+                // Add metamethods (excluding __gc which is handled differently in Luau)
+                add_metamethods(metamethods.value(), metatable);
             }
             else
             {
                 // No metamethods of any kind was provided
-
+                // In Luau, we don't need to create a special metatable for GC
                 Table metatable = prepare_new_metatable("AutoGCMetatable");
-
-                // We know that the user didn't provide their own '__gc' metamethod so we can safely attach our own
-                create_auto_gc_metamethod(metatable);
             }
 
-            auto* userdata = static_cast<std::shared_ptr<ObjectType>*>(lua_newuserdatauv(get_lua_state(), sizeof(std::shared_ptr<ObjectType>), 2));
+            // In Luau, use lua_newuserdatadtor to register the shared_ptr destructor
+            auto* userdata = static_cast<std::shared_ptr<ObjectType>*>(lua_newuserdatadtor(get_lua_state(), sizeof(std::shared_ptr<ObjectType>), [](void* ud) {
+                static_cast<std::shared_ptr<ObjectType>*>(ud)->~shared_ptr();
+            }));
 
-            // Set a user value that tells 'get_userdata()' that this userdata is a shared heap object
-            set_integer(UserdataInternalType::SharedHeapObject);
-            lua_setiuservalue(get_lua_state(), -2, 2);
+            // Create environment table for user values
+            lua_createtable(get_lua_state(), 2, 0);
 
+            // Set user value 2: internal type (SharedHeapObject)
+            lua_pushinteger(get_lua_state(), UserdataInternalType::SharedHeapObject);
+            lua_rawseti(get_lua_state(), -2, 2);
+
+            // Set the environment table on the userdata
+            lua_setfenv(get_lua_state(), -2);
+
+            // Construct the shared_ptr in-place
             new (userdata) std::shared_ptr<ObjectType>(object);
 
-            // Remove dangling table
+            // Remove dangling table from metatable creation
             lua_remove(get_lua_state(), -2);
+
+            // Set the metatable
             luaL_getmetatable(get_lua_state(), metatable_name.has_value() ? metatable_name.value().data() : "AutoGCMetatable");
             lua_setmetatable(get_lua_state(), -2);
         }

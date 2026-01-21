@@ -65,7 +65,9 @@ local PLATFORM_TYPES = {
             "OVERRIDE_PLATFORM_HEADER_NAME=Windows",
             "UBT_COMPILED_PLATFORM=Win64",
             "UNICODE",
-            "_UNICODE"
+            "_UNICODE",
+            "WINVER=0x0A00",
+            "_WIN32_WINNT=0x0A00"
         },
 
     }

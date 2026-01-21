@@ -1,5 +1,108 @@
 #include <GUI/LuaDebugger.hpp>
 
+// Check if we're using Luau (which has incompatible debug API)
+#include <lua.hpp>
+
+#ifdef USING_LUAU
+// Luau's debug API is fundamentally different from Lua 5.x
+// The LuaDebugger requires the following which Luau doesn't support:
+// - lua_getstack / lua_getinfo with 3 arguments
+// - lua_Debug::namewhat, event fields
+// - lua_getlocal with lua_Debug* parameter
+// For now, we provide a stub implementation when using Luau
+// TODO: Rewrite LuaDebugger to use Luau's debug API (lua_callbacks, etc.)
+
+#include <DynamicOutput/DynamicOutput.hpp>
+
+namespace RC::GUI
+{
+    LuaDebugger* LuaDebugger::s_instance = nullptr;
+
+    LuaDebugger::LuaDebugger()
+    {
+        if (!s_instance)
+        {
+            s_instance = this;
+        }
+    }
+
+    LuaDebugger::~LuaDebugger()
+    {
+        if (s_instance == this)
+        {
+            s_instance = nullptr;
+        }
+    }
+
+    auto LuaDebugger::get() -> LuaDebugger&
+    {
+        static LuaDebugger instance;
+        return instance;
+    }
+
+    auto LuaDebugger::has_instance() -> bool { return s_instance != nullptr; }
+
+    // State tracking - stubs
+    auto LuaDebugger::register_lua_state(lua_State*, const std::string&, const std::string&) -> void {}
+    auto LuaDebugger::unregister_lua_state(lua_State*) -> void {}
+    auto LuaDebugger::update_state_stack(lua_State*) -> void {}
+
+    // Error recording - stubs
+    auto LuaDebugger::record_error(lua_State*, const std::string&, const std::string&) -> void {}
+    auto LuaDebugger::clear_error_history() -> void {}
+    auto LuaDebugger::get_error_count() const -> size_t { return 0; }
+
+    // Stack inspection utilities - stubs
+    auto LuaDebugger::get_stack_slots(lua_State*) -> std::vector<LuaStackSlot> { return {}; }
+    auto LuaDebugger::get_call_stack(lua_State*) -> std::vector<LuaCallStackEntry> { return {}; }
+    auto LuaDebugger::get_stack_frames_with_locals(lua_State*) -> std::vector<LuaStackFrame> { return {}; }
+    auto LuaDebugger::format_stack_value(lua_State*, int, size_t) -> std::string { return ""; }
+    auto LuaDebugger::get_enhanced_traceback(lua_State*, const std::string& message, int) -> std::string { return message; }
+    auto LuaDebugger::get_globals(lua_State*, size_t) -> std::vector<std::pair<std::string, LuaStackSlot>> { return {}; }
+
+    // Breakpoint management - stubs
+    auto LuaDebugger::add_breakpoint(const std::string&, int, const std::string&) -> void {}
+    auto LuaDebugger::remove_breakpoint(const std::string&, int) -> void {}
+    auto LuaDebugger::toggle_breakpoint(const std::string&, int) -> void {}
+    auto LuaDebugger::clear_all_breakpoints() -> void {}
+    auto LuaDebugger::has_breakpoint(const std::string&, int) const -> bool { return false; }
+
+    // Debug control - stubs
+    auto LuaDebugger::continue_execution() -> void {}
+    auto LuaDebugger::step_into() -> void {}
+    auto LuaDebugger::step_over() -> void {}
+    auto LuaDebugger::step_out() -> void {}
+
+    // Debug hook - stubs
+    auto LuaDebugger::debug_hook(lua_State*, lua_Debug*) -> void {}
+    auto LuaDebugger::install_debug_hook(lua_State*) -> void {}
+    auto LuaDebugger::uninstall_debug_hook(lua_State*) -> void {}
+    auto LuaDebugger::has_debug_hook(lua_State*) const -> bool { return false; }
+
+    // Script loading - stubs
+    auto LuaDebugger::load_script(const std::string&) -> const LuaScriptFile* { return nullptr; }
+    auto LuaDebugger::get_mod_scripts(lua_State*) -> std::vector<std::string> { return {}; }
+    auto LuaDebugger::save_script(const std::string&, const std::string&) -> bool { return false; }
+    auto LuaDebugger::reload_mod_for_state(lua_State*) -> void {}
+
+    // REPL - stubs
+    auto LuaDebugger::execute_repl(lua_State*, const std::string&) -> void {}
+
+    // Table inspection - stubs
+    auto LuaDebugger::get_table_children(lua_State*, const std::string&, int) -> std::vector<LuaValueNode> { return {}; }
+    auto LuaDebugger::request_table_expand(const std::string&) -> void {}
+
+    // GUI rendering - stub
+    auto LuaDebugger::render() -> void
+    {
+        // Stub implementation - Lua debugger not available with Luau
+        // TODO: Implement using Luau's debug API
+    }
+
+} // namespace RC::GUI
+
+#else // Not using Luau - use full implementation
+
 #include <algorithm>
 #include <bit>
 #include <ctime>
@@ -27,8 +130,6 @@
 #include <Unreal/CoreUObject/UObject/UnrealType.hpp>
 #include <Unreal/UObject.hpp>
 #include <Unreal/FText.hpp>
-
-#include <lua.hpp>
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
@@ -4222,3 +4323,5 @@ namespace RC::GUI
     }
 
 } // namespace RC::GUI
+
+#endif // USING_LUAU
