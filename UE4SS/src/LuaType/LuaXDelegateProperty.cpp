@@ -31,6 +31,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             lua.new_metatable<LuaType::XDelegateProperty>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
@@ -100,6 +102,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             params.lua.new_metatable<LuaType::XMulticastDelegateProperty>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        params.lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         params.lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
@@ -124,6 +128,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             lua.new_metatable<LuaType::XMulticastDelegateProperty>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
@@ -375,6 +381,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             params.lua.new_metatable<LuaType::XMulticastSparseDelegateProperty>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        params.lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         params.lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
@@ -399,6 +407,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             lua.new_metatable<LuaType::XMulticastSparseDelegateProperty>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());

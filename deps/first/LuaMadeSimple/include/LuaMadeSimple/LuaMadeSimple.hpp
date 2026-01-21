@@ -5,6 +5,7 @@
 #include <optional>
 
 #include <LuaMadeSimple/Common.hpp>
+#include <LuaMadeSimple/LuauCompat.hpp>
 #include <lua.hpp>
 #include <fmt/core.h>
 
@@ -584,8 +585,11 @@ namespace RC::LuaMadeSimple
         // NOTE: In Luau, __gc is not supported. Destructors are handled via lua_newuserdatadtor
         // when creating the userdata. The metatable is still used for other metamethods.
         // More metamethods can be supplied via the 'metamethods' parameter (see the 'MetaMethods' struct)
+        // If has_member_funcs_table is true, expects member_funcs_table to be on the stack at -1 before metatable creation
         template <typename ObjectType>
-        auto new_metatable(std::optional<std::string_view> metatable_name = std::nullopt, OptionalMetaMethods metamethods = std::nullopt) const -> void
+        auto new_metatable(std::optional<std::string_view> metatable_name = std::nullopt,
+                          OptionalMetaMethods metamethods = std::nullopt,
+                          bool has_member_funcs_table = true) const -> void
         {
             // Note: In Luau, we don't add __gc to metatables
             // Destructors are registered when creating userdata with lua_newuserdatadtor
@@ -611,10 +615,16 @@ namespace RC::LuaMadeSimple
                     // In Luau, no __gc is added - destructors are handled at userdata creation
                 }
             }
-            if (is_table(-2)) // if called from construct_metamethods_object this will be false
+            if (has_member_funcs_table && is_table(-2))
             {
+                // Store the member functions table on metatable for later retrieval
                 lua_rotate(get_lua_state(), -2, 1);
-                lua_rawseti(get_lua_state(), -2, 1);
+                // Stack is now: [metatable, member_funcs_table]
+                lua_pushstring(get_lua_state(), Luau::MT_KEY_MEMBER_FUNCS);
+                lua_insert(get_lua_state(), -2); // Move key below value
+                // Stack is now: [metatable, key, member_funcs_table]
+                lua_rawset(get_lua_state(), -3);
+                // Stack is now: [metatable]
             }
         }
 
@@ -627,38 +637,46 @@ namespace RC::LuaMadeSimple
                                    OptionalMetaMethods metamethods = std::nullopt,
                                    bool is_metamethod_container = false) const -> void
         {
+            const char* mt_name = metatable_name.has_value() ? metatable_name.value().data() : "AutoGCMetatable";
+
             // In Luau, use lua_newuserdatadtor to register a destructor at creation time
             // The destructor is called when the userdata is garbage collected
             auto* userdata = static_cast<ObjectType*>(lua_newuserdatadtor(get_lua_state(), sizeof(ObjectType), [](void* ud) {
                 static_cast<ObjectType*>(ud)->~ObjectType();
             }));
 
-            // Create environment table for user values (Luau doesn't support multiple user values natively)
-            lua_createtable(get_lua_state(), 5, 0);
-
-            // Set user value 2: internal type (LuaOwnedStackObject)
-            lua_pushinteger(get_lua_state(), UserdataInternalType::LuaOwnedStackObject);
-            lua_rawseti(get_lua_state(), -2, 2);
-
-            // Set user value 5: is polymorphic type
-            if constexpr (std::is_polymorphic_v<ObjectType>)
-            {
-                lua_pushboolean(get_lua_state(), true);
-            }
-            else
-            {
-                lua_pushboolean(get_lua_state(), false);
-            }
-            lua_rawseti(get_lua_state(), -2, 5);
-
-            // Set the environment table on the userdata
-            lua_setfenv(get_lua_state(), -2);
-
             // Construct the object in-place
             new (userdata) ObjectType(std::move(object));
 
             // Set the metatable
-            luaL_getmetatable(get_lua_state(), metatable_name.has_value() ? metatable_name.value().data() : "AutoGCMetatable");
+            luaL_getmetatable(get_lua_state(), mt_name);
+            if (!lua_istable(get_lua_state(), -1))
+            {
+                lua_pop(get_lua_state(), 1);
+                throw_error(fmt::format("[transfer_stack_object] Metatable '{}' not found", mt_name));
+            }
+
+            // Store user metamethods on the metatable if provided (and not already stored)
+            if (!is_metamethod_container && metamethods.has_value())
+            {
+                Luau::store_on_metatable_if_absent(get_lua_state(), -1, Luau::MT_KEY_USER_METAMETHODS, [&]() {
+                    // Construct the metamethods container
+                    construct_metamethods_object(metamethods, metatable_name);
+                });
+            }
+
+            // Store polymorphic type flag on metatable (only once per metatable)
+            Luau::store_on_metatable_if_absent(get_lua_state(), -1, Luau::MT_KEY_IS_POLYMORPHIC, [&]() {
+                if constexpr (std::is_polymorphic_v<ObjectType>)
+                {
+                    lua_pushboolean(get_lua_state(), true);
+                }
+                else
+                {
+                    lua_pushboolean(get_lua_state(), false);
+                }
+            });
+
             lua_setmetatable(get_lua_state(), -2);
         }
 
@@ -719,37 +737,33 @@ namespace RC::LuaMadeSimple
         template <typename ObjectType>
         [[nodiscard]] auto get_userdata(int32_t force_index = 1, bool preserve_stack = false) const -> ObjectType&
         {
-            lua_getiuservalue(get_lua_state(), force_index, 2);
-            int64_t userdata_internal_type = get_integer(-1);
+            // Convert negative index to absolute index before any stack operations
+            int abs_index = force_index;
+            if (force_index < 0)
+            {
+                abs_index = lua_gettop(get_lua_state()) + force_index + 1;
+            }
 
-            if (userdata_internal_type == UserdataInternalType::LuaOwnedStackObject)
+            // Verify we have userdata at the expected position
+            if (!lua_isuserdata(get_lua_state(), abs_index))
             {
-                // Stack object owned by Lua
-                auto& object = *static_cast<ObjectType*>(lua_touserdata(get_lua_state(), force_index));
-                if (!preserve_stack)
-                {
-                    lua_remove(get_lua_state(), force_index);
-                }
-                return object;
+                throw_error(fmt::format("[get_userdata] Expected userdata at index {}, got {}",
+                                       abs_index, lua_typename(get_lua_state(), lua_type(get_lua_state(), abs_index))));
             }
-            else if (userdata_internal_type == UserdataInternalType::SharedHeapObject)
+
+            void* ud_ptr = lua_touserdata(get_lua_state(), abs_index);
+            if (!ud_ptr)
             {
-                // Shared object (shared_ptr)
-                auto& object = **static_cast<std::shared_ptr<ObjectType>*>(lua_touserdata(get_lua_state(), force_index));
-                if (!preserve_stack)
-                {
-                    lua_remove(get_lua_state(), force_index);
-                }
-                return object;
+                throw_error("[get_userdata] lua_touserdata returned null");
             }
-            else [[unlikely]]
+
+            // Direct cast - the userdata contains the object directly
+            auto& object = *static_cast<ObjectType*>(ud_ptr);
+            if (!preserve_stack)
             {
-                luaL_traceback(get_lua_state(),
-                               get_lua_state(),
-                               "[get_userdata] The user value 'userdata_internal_type' corresponding to this userdata was invalid\"",
-                               0);
-                throw std::runtime_error{"See traceback"};
+                lua_remove(get_lua_state(), abs_index);
             }
+            return object;
         }
     };
 

@@ -24,6 +24,8 @@ namespace RC::LuaType
             setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
             lua.new_metatable<LuaType::FText>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());

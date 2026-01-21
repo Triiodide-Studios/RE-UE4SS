@@ -108,6 +108,8 @@ namespace RC::LuaMadeSimple::Type
                 setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(table);
                 lua.new_metatable<RemoteObject<ObjectType>>(metatable_name, table.get_metamethods());
             }
+            // Pop the metatable left on stack by get_metatable or new_metatable
+            lua.discard_value(-1);
 
             // Create object & surrender ownership to Lua
             lua.transfer_stack_object(std::move(lua_object), metatable_name, table.get_metamethods());
@@ -133,8 +135,8 @@ namespace RC::LuaMadeSimple::Type
         auto static setup_member_functions(LuaMadeSimple::Lua::Table& table) -> void
         {
             table.add_pair("GetAddress", [](const LuaMadeSimple::Lua& lua) -> int {
-                lua_getiuservalue(lua.get_lua_state(), 1, 5);
-                if (lua_toboolean(lua.get_lua_state(), -1))
+                // Polymorphic types need special handling - their base pointer may differ from derived
+                if (Luau::is_polymorphic_type(lua.get_lua_state(), 1))
                 {
                     lua.throw_error("Call to RemoteObject:GetAddress on polymorphic type is not allowed, please override GetAddress.");
                 }
@@ -145,21 +147,14 @@ namespace RC::LuaMadeSimple::Type
             });
 
             table.add_pair("IsValid", [](const LuaMadeSimple::Lua& lua) -> int {
-                lua_getiuservalue(lua.get_lua_state(), 1, 5);
-                if (lua_toboolean(lua.get_lua_state(), -1))
+                // Polymorphic types need special handling - their base pointer may differ from derived
+                if (Luau::is_polymorphic_type(lua.get_lua_state(), 1))
                 {
                     lua.throw_error("Call to RemoteObject:IsValid on polymorphic type is not allowed, please override IsValid.");
                 }
 
                 const RemoteObject& lua_object = lua.get_userdata<RemoteObject>();
-                if (lua_object.get_remote_cpp_object())
-                {
-                    lua.set_bool(true);
-                }
-                else
-                {
-                    lua.set_bool(false);
-                }
+                lua.set_bool(lua_object.get_remote_cpp_object() != nullptr);
                 return 1;
             });
 

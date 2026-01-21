@@ -2222,6 +2222,8 @@ Overloads:
             setup_member_functions(table);
             lua.new_metatable<LuaType::RemoteUnrealParam>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
@@ -2244,6 +2246,8 @@ Overloads:
             setup_member_functions(table);
             lua.new_metatable<LuaType::RemoteUnrealParam>(metatable_name, lua_object.get_metamethods());
         }
+        // Pop the metatable left on stack by get_metatable or new_metatable
+        lua.discard_value(-1);
 
         // Create object & surrender ownership to Lua
         lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());

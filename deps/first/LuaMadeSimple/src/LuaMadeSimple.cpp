@@ -535,44 +535,75 @@ namespace RC::LuaMadeSimple
         metatable.add_pair("__metatable", false);
 
         // Create the '__index' metamethod
-        // This one will always exist but the user supplied callable might not
+        // This metamethod handles property/method access on userdata objects.
+        // It first checks for member functions, then falls back to user-defined __index.
         metatable.add_pair("__index", [](const LuaMadeSimple::Lua& lua) -> int {
-            if (lua.is_userdata(-2))
+            if (!lua.is_userdata(-2))
             {
-                // Get the global table that corresponds to this metatable
-                if (lua_getiuservalue(lua.get_lua_state(), -2, 3) == LUA_TNIL)
-                {
-                    lua_pop(lua.get_lua_state(), 1);
-                    luaL_traceback(lua.get_lua_state(), lua.get_lua_state(), nullptr, 0);
-                    throw std::runtime_error{"System: Global for __index doesn't exist."};
-                }
+                return 1;
+            }
 
-                // Push the member_name to the top of the stack for lua_raw_get
-                lua_pushvalue(lua.get_lua_state(), -2);
-                if (lua_rawget(lua.get_lua_state(), -2) != LUA_TNIL)
+            lua_State* L = lua.get_lua_state();
+
+            // Save key info early for diagnostics (key is at stack position 2)
+            std::string key_info = Luau::format_value_for_diagnostics(L, 2);
+
+            // Step 1: Try to find the key in member functions table
+            if (Luau::get_member_funcs_table(L, 1))
+            {
+                // Member functions table is now at top of stack
+                lua_pushvalue(L, 2); // Push the key
+                int result_type = lua_rawget(L, -2);
+
+                if (result_type != LUA_TNIL)
                 {
+                    // Found member function - remove the member functions table, keep the result
+                    lua_remove(L, -2);
                     return 1;
                 }
-                else
+
+                // Not found in member functions - pop nil and table
+                lua_pop(L, 2);
+            }
+            else
+            {
+                // get_member_funcs_table pushes nil on failure, pop it
+                lua_pop(L, 1);
+            }
+
+            // Step 2: Try user-provided __index metamethod
+            if (Luau::get_user_metamethods(L, 1))
+            {
+                // User metamethods userdata is now at top of stack
+                const auto& lua_object = lua.get_userdata<Type::MetaMethodContainer>(-1);
+                // Note: get_userdata pops the value
+
+                const MetaMethods& user_callables = lua_object.metamethods;
+
+                if (user_callables.index.has_value())
                 {
-                    // Pop the table from lua_getglobal and the nil from lua_rawget
-                    lua_pop(lua.get_lua_state(), 2);
+                    // User __index will process [userdata, key] and push result
+                    user_callables.index.value()(lua);
 
-                    // Duplicate the userdata so that we can work with it without deleting the original from the stack
-                    lua_pushvalue(lua.get_lua_state(), -2);
-
-                    // Push onto the stack, the userdata corresponding to the MetaMethodContainer for this userdata
-                    lua_getiuservalue(lua.get_lua_state(), -1, 4);
-                    const auto& lua_object = lua.get_userdata<Type::MetaMethodContainer>(-1);
-
-                    const MetaMethods& user_callables = lua_object.metamethods;
-
-                    if (user_callables.index.has_value())
+                    // Verify user __index pushed a value
+                    if (lua_gettop(L) >= 1)
                     {
-                        user_callables.index.value()(lua);
+                        return 1;
                     }
                 }
+
+                // User __index exists but didn't push a value
+                lua.throw_error(fmt::format("[__index] Member '{}' not found and user __index did not push a value", key_info));
             }
+            else
+            {
+                // No user metamethods - pop nil that was pushed
+                int umm_type = lua_type(L, -1);
+                lua_pop(L, 1);
+                lua.throw_error(fmt::format("[__index] Member '{}' not found. __user_metamethods was {} (need userdata)",
+                                           key_info, lua_typename(L, umm_type)));
+            }
+
             return 1;
         });
 
@@ -1018,13 +1049,19 @@ namespace RC::LuaMadeSimple
                     metamethods->equal,
                     metamethods->length,
             };
-            new_metatable<Type::MetaMethodContainer>(metatable_name, std::nullopt);
+            // Pass false for has_member_funcs_table since we don't have one on the stack
+            new_metatable<Type::MetaMethodContainer>(metatable_name, std::nullopt, false);
+            // Pop the metatable left on stack by new_metatable
+            discard_value(-1);
             transfer_stack_object(std::move(c), metatable_name, std::nullopt, true);
         }
         else
         {
             Type::MetaMethodContainer c{};
-            new_metatable<Type::MetaMethodContainer>(metatable_name, std::nullopt);
+            // Pass false for has_member_funcs_table since we don't have one on the stack
+            new_metatable<Type::MetaMethodContainer>(metatable_name, std::nullopt, false);
+            // Pop the metatable left on stack by new_metatable
+            discard_value(-1);
             transfer_stack_object(std::move(c), metatable_name, std::nullopt, true);
         }
     }

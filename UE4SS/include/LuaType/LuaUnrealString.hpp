@@ -38,6 +38,8 @@ namespace RC::LuaType
                 setup_member_functions<LuaMadeSimple::Type::IsFinal::Yes>(lua, table);
                 lua.new_metatable<TLuaStringBase>(metatable_name, lua_object.get_metamethods());
             }
+            // Pop the metatable left on stack by get_metatable or new_metatable
+            lua.discard_value(-1);
 
             // Transfer the object & its ownership fully to Lua
             lua.transfer_stack_object(std::move(lua_object), metatable_name, lua_object.get_metamethods());
